@@ -73,7 +73,11 @@ group.projects.each do |project|
           cntr = 0
           minutes = Hash.new
           notes =
-            Gitlab.issue_notes(project.id, issue.iid, { page: 1, per_page: 20 })
+            Gitlab.issue_notes(
+              project.id,
+              issue.iid,
+              { page: 1, per_page: 100 }
+            )
 
           if notes.nil?
             puts "No notes at all."
