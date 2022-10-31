@@ -20,7 +20,7 @@ FIELD_DELIMITER=";"
 
 ## Gitlab API Client
 
-This work is based on [Gitlab API Client][https://github.com/NARKOZ/gitlab] by Nihad Abbasov. The Gitlab API v4 unfortunately does not publish raw timesheets, so we had to go through all the notes, extract the times from them and add it up for each author.
+This work is based on [Gitlab API Client][https://github.com/NARKOZ/gitlab] by [Nihad Abbasov](https://github.com/NARKOZ). The Gitlab API v4 unfortunately does not publish raw timesheets, so we had to go through all the notes, extract the times from them and add it up for each author.
 
 ### More reading
 
