@@ -42,7 +42,11 @@ delim = ENV["FIELD_DELIMITER"] unless ENV["FIELD_DELIMITER"].nil?
 outfile = "Timesheets.csv"
 outfile = ENV["OUTFILE"] unless ENV["OUTFILE"].nil?
 
-File.write(outfile, "User" + delim + "Date" + delim + "Minutes\n", mode: "w")
+File.write(
+  outfile,
+  "User" + delim + "Date" + delim + "Issue" + delim + "Minutes\n",
+  mode: "w:UTF-8"
+)
 
 group.projects.each do |project|
   unless project.nil?
@@ -95,7 +99,7 @@ group.projects.each do |project|
                 t = note.author.username + delim + cdate.to_s + delim
                 tt += d[1].to_i * 1440 unless d.nil? || d[1].nil?
                 tt += h[1].to_i * 60 unless h.nil? || h[1].nil?
-                tt = m[1].to_i unless m.nil? || m[1].nil?
+                tt += m[1].to_i unless m.nil? || m[1].nil?
                 minutes[cdate][note.author.username] += tt
 
                 t += tt.to_s + "\n"
