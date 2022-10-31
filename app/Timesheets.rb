@@ -44,7 +44,8 @@ outfile = ENV["OUTFILE"] unless ENV["OUTFILE"].nil?
 
 File.write(
   outfile,
-  "User" + delim + "Date" + delim + "Issue" + delim + "Minutes\n",
+  "User" + delim + "Date" + delim + "Project" + delim + "Reference" + delim +
+    "Issue Name" + delim + "Minutes\n",
   mode: "w:UTF-8"
 )
 
@@ -71,18 +72,13 @@ group.projects.each do |project|
 
           cntr = 0
           minutes = Hash.new
-          # TODO: Pagination
           notes =
-            Gitlab.issue_notes(
-              project.id,
-              issue.iid,
-              { page: 1, per_page: 100 }
-            )
+            Gitlab.issue_notes(project.id, issue.iid, { page: 1, per_page: 20 })
 
           if notes.nil?
             puts "No notes at all."
           else
-            notes.each do |note|
+            notes.auto_paginate do |note|
               cntr += 1
               spend = note.body.match(/added\ .*\ of\ time\ spent/i).to_s
               unless spend.nil? || spend == ""
@@ -96,7 +92,10 @@ group.projects.each do |project|
                 d = spend.match(/([0-9]+)d/)
                 h = spend.match(/([0-9]+)h/)
                 m = spend.match(/([0-9]+)m/)
-                t = note.author.username + delim + cdate.to_s + delim
+                t =
+                  note.author.username + delim + cdate.to_s + delim +
+                    issue.references.full + delim +
+                    project.name_with_namespace + delim + issue.title + delim
                 tt += d[1].to_i * 1440 unless d.nil? || d[1].nil?
                 tt += h[1].to_i * 60 unless h.nil? || h[1].nil?
                 tt += m[1].to_i unless m.nil? || m[1].nil?
