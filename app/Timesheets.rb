@@ -92,7 +92,7 @@ group.projects.each do |project|
                 d = spend.match(/([0-9]+)d/)
                 h = spend.match(/([0-9]+)h/)
                 m = spend.match(/([0-9]+)m/)
-                t = note.author.name + delim + cdate.to_s + delim
+                t = note.author.username + delim + cdate.to_s + delim
                 tt += d[1].to_i * 1440 unless d.nil? || d[1].nil?
                 tt += h[1].to_i * 60 unless h.nil? || h[1].nil?
                 tt = m[1].to_i unless m.nil? || m[1].nil?
