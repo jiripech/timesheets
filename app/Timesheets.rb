@@ -1,4 +1,5 @@
 require "gitlab"
+require "csv"
 
 def put_time_estimation(stats)
   if stats.human_time_estimate.nil?
@@ -42,78 +43,73 @@ delim = ENV["FIELD_DELIMITER"] unless ENV["FIELD_DELIMITER"].nil?
 outfile = "Timesheets.csv"
 outfile = ENV["OUTFILE"] unless ENV["OUTFILE"].nil?
 
-File.write(
-  outfile,
-  "User" + delim + "Date" + delim + "Project" + delim + "Reference" + delim +
-    "Issue Name" + delim + "Minutes\n",
-  mode: "w:UTF-8"
-)
+CSV.open(outfile, "wb", force_quotes: true, col_sep: delim, encoding: "utf-8", headers: :first_row) do |csv|
+  csv << ["User", "Date", "Project", "Reference", "Issue Name", "Minutes"]
 
-group.projects.each do |project|
-  unless project.nil?
-    puts "## " + project.name_with_namespace
-    cli
-      .issues(project.path_with_namespace)
-      .each do |issue|
-        puts "### " + issue.title + " (#" + issue.iid.to_s + ")"
-        puts
-
-        s = issue.time_stats
-        if s.human_total_time_spent.nil?
-          puts "No time stats."
-        else
-          print "- Estimated (minutes): "
-          put_time_estimation(s)
-          print "- Spent (minutes): "
-          put_time_spend(s)
-
-          puts "#### Notes"
+  cli.group_projects(group.id, :include_subgroups => true).auto_paginate.each do |project|
+    unless project.nil?
+      puts "## " + project.name_with_namespace
+      cli
+        .issues(project.path_with_namespace)
+        .auto_paginate
+        .each do |issue|
+          puts "### " + issue.title + " (#" + issue.iid.to_s + ")"
           puts
 
-          cntr = 0
-          minutes = Hash.new
-          notes =
-            Gitlab.issue_notes(
-              project.id,
-              issue.iid,
-              { page: 1, per_page: 100 }
-            )
-
-          if notes.nil?
-            puts "No notes at all."
+          s = issue.time_stats
+          if s.human_total_time_spent.nil?
+            puts "No time stats."
           else
-            notes.auto_paginate do |note|
-              cntr += 1
-              spend = note.body.match(/added\ .*\ of\ time\ spent/i).to_s
-              unless spend.nil? || spend == ""
-                cdate = Time.parse(note.created_at).to_date.to_s
-                minutes[cdate] = Hash.new if minutes[cdate].nil?
-                minutes[cdate][note.author.username] = 0 if minutes[cdate][
-                  note.author.username
-                ].nil?
-                print "Added at (" + cdate + "): "
-                tt = 0
-                d = spend.match(/([0-9]+)d/)
-                h = spend.match(/([0-9]+)h/)
-                m = spend.match(/([0-9]+)m/)
-                t =
-                  note.author.username + delim + cdate.to_s + delim +
-                    issue.references.full + delim +
-                    project.name_with_namespace + delim + issue.title + delim
-                tt += d[1].to_i * 1440 unless d.nil? || d[1].nil?
-                tt += h[1].to_i * 60 unless h.nil? || h[1].nil?
-                tt += m[1].to_i unless m.nil? || m[1].nil?
-                minutes[cdate][note.author.username] += tt
+            print "- Estimated (minutes): "
+            put_time_estimation(s)
+            print "- Spent (minutes): "
+            put_time_spend(s)
 
-                t += tt.to_s + "\n"
-                File.write(outfile, t, mode: "a")
+            puts "#### Notes"
+            puts
 
-                puts tt.to_s + "m by " + note.author.name
-                puts
+            cntr = 0
+            minutes = Hash.new
+            notes =
+              Gitlab.issue_notes(
+                project.id,
+                issue.iid,
+                { page: 1, per_page: 100 }
+              )
+
+            if notes.nil?
+              puts "No notes at all."
+            else
+              notes.auto_paginate do |note|
+                cntr += 1
+                spend = note.body.match(/added\ .*\ of\ time\ spent/i).to_s
+                unless spend.nil? || spend == ""
+                  cdate = Time.parse(note.created_at).to_date.to_s
+                  minutes[cdate] = Hash.new if minutes[cdate].nil?
+                  minutes[cdate][note.author.username] = 0 if minutes[cdate][
+                    note.author.username
+                  ].nil?
+                  print "Added at (" + cdate + "): "
+                  tt = 0
+                  d = spend.match(/([0-9]+)d/)
+                  h = spend.match(/([0-9]+)h/)
+                  m = spend.match(/([0-9]+)m/)
+                  t = [note.author.username, cdate.to_s, issue.references.full, project.name_with_namespace, issue.title]
+                  tt += d[1].to_i * 1440 unless d.nil? || d[1].nil?
+                  tt += h[1].to_i * 60 unless h.nil? || h[1].nil?
+                  tt += m[1].to_i unless m.nil? || m[1].nil?
+                  minutes[cdate][note.author.username] += tt
+
+                  t.append(tt.to_s)
+                  csv << t
+
+                  puts tt.to_s + "m by " + note.author.name
+                  puts
+                end
               end
             end
           end
         end
-      end
+    end
   end
 end
