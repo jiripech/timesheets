@@ -1,0 +1,184 @@
+name: E2E Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Happy-path E2E: post a real time-entry note, run the script, verify output.
+  # Requires the "Test" GitHub environment with the variables and secrets
+  # documented in COVERAGE.md.
+  # ---------------------------------------------------------------------------
+  e2e-happy-path:
+    name: E2E - Happy Path
+    runs-on: ubuntu-latest
+    environment: Test
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      # Post a user note that matches the time-tracking regex so the script
+      # can pick it up.  We store the created note ID for cleanup later.
+      - name: Post time-entry note to GitLab issue
+        id: post_note
+        env:
+          GITLAB_API_ENDPOINT: ${{ secrets.GITLAB_API_ENDPOINT }}
+          GITLAB_API_PRIVATE_TOKEN: ${{ secrets.GITLAB_API_PRIVATE_TOKEN }}
+          GITLAB_PROJECT_URL: ${{ secrets.GITLAB_PROJECT_URL }}
+          GITLAB_ISSUE: ${{ vars.GITLAB_ISSUE }}
+        run: |
+          # URL-encode the project path extracted from the full project URL.
+          PROJECT_PATH=$(python3 - <<'PYEOF'
+          import os, re, urllib.parse
+          url = os.environ.get("GITLAB_PROJECT_URL", "")
+          path = re.sub(r'^https?://[^/]+/', '', url)
+          print(urllib.parse.quote(path, safe=''))
+          PYEOF
+          )
+
+          RESPONSE=$(curl -sf \
+            -X POST "${GITLAB_API_ENDPOINT}/projects/${PROJECT_PATH}/issues/${GITLAB_ISSUE}/notes" \
+            -H "PRIVATE-TOKEN: ${GITLAB_API_PRIVATE_TOKEN}" \
+            --data-urlencode "body=add 1h of time spent")
+
+          NOTE_ID=$(echo "$RESPONSE" | python3 -c "import json, sys; print(json.load(sys.stdin)['id'])")
+          echo "note_id=${NOTE_ID}" >> "$GITHUB_OUTPUT"
+          echo "Created test note with ID: ${NOTE_ID}"
+
+      # Configure all required environment variables and run the script.
+      - name: Run Timesheets.rb
+        env:
+          GITLAB_API_ENDPOINT: ${{ secrets.GITLAB_API_ENDPOINT }}
+          GITLAB_API_PRIVATE_TOKEN: ${{ secrets.GITLAB_API_PRIVATE_TOKEN }}
+          GITLAB_GROUP: ${{ secrets.GITLAB_GROUP }}
+          OUTFILE: ${{ vars.OUTFILE }}
+          FIELD_DELIMITER: ${{ vars.FIELD_DELIMITER }}
+        run: |
+          bundle exec ruby app/Timesheets.rb > Timesheets.md
+          echo "=== Timesheets.md ==="
+          cat Timesheets.md
+
+      # Verify the CSV file was created, has the expected header columns, and
+      # contains at least one data row (the note we just posted).
+      - name: Verify CSV output
+        env:
+          OUTFILE: ${{ vars.OUTFILE }}
+        run: |
+          echo "=== CSV: $OUTFILE ==="
+
+          if [ ! -f "$OUTFILE" ]; then
+            echo "ERROR: Output file not found: $OUTFILE"
+            exit 1
+          fi
+
+          cat "$OUTFILE"
+
+          HEADER=$(head -1 "$OUTFILE")
+          for col in "User" "Date" "Project" "Reference" "Issue Name" "Minutes"; do
+            if ! echo "$HEADER" | grep -q "$col"; then
+              echo "ERROR: Missing column '$col' in CSV header: $HEADER"
+              exit 1
+            fi
+          done
+
+          DATA_ROWS=$(awk 'NR>1 && NF>0' "$OUTFILE" | wc -l)
+          if [ "$DATA_ROWS" -lt 1 ]; then
+            echo "ERROR: No data rows found in CSV output"
+            exit 1
+          fi
+
+          echo "CSV validation passed: $DATA_ROWS data row(s) found"
+
+      # Always remove the test note so we don't pollute the GitLab issue.
+      - name: Clean up test note
+        if: always() && steps.post_note.outputs.note_id != ''
+        env:
+          GITLAB_API_ENDPOINT: ${{ secrets.GITLAB_API_ENDPOINT }}
+          GITLAB_API_PRIVATE_TOKEN: ${{ secrets.GITLAB_API_PRIVATE_TOKEN }}
+          GITLAB_PROJECT_URL: ${{ secrets.GITLAB_PROJECT_URL }}
+          GITLAB_ISSUE: ${{ vars.GITLAB_ISSUE }}
+          NOTE_ID: ${{ steps.post_note.outputs.note_id }}
+        run: |
+          PROJECT_PATH=$(python3 - <<'PYEOF'
+          import os, re, urllib.parse
+          url = os.environ.get("GITLAB_PROJECT_URL", "")
+          path = re.sub(r'^https?://[^/]+/', '', url)
+          print(urllib.parse.quote(path, safe=''))
+          PYEOF
+          )
+
+          curl -sf \
+            -X DELETE "${GITLAB_API_ENDPOINT}/projects/${PROJECT_PATH}/issues/${GITLAB_ISSUE}/notes/${NOTE_ID}" \
+            -H "PRIVATE-TOKEN: ${GITLAB_API_PRIVATE_TOKEN}" \
+            && echo "Cleaned up note ${NOTE_ID}" \
+            || echo "Warning: could not delete note ${NOTE_ID} – manual cleanup may be needed"
+
+  # ---------------------------------------------------------------------------
+  # Failure scenario: GITLAB_API_ENDPOINT is not set.
+  # The script must exit with a non-zero code.
+  # ---------------------------------------------------------------------------
+  e2e-missing-endpoint:
+    name: E2E - Missing GITLAB_API_ENDPOINT
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Run script without GITLAB_API_ENDPOINT (expect failure)
+        run: |
+          if bundle exec ruby app/Timesheets.rb 2>/dev/null; then
+            echo "ERROR: Script should have failed when GITLAB_API_ENDPOINT is not set"
+            exit 1
+          fi
+          echo "Script correctly exited with an error when GITLAB_API_ENDPOINT is missing"
+        env:
+          GITLAB_API_PRIVATE_TOKEN: "glpat_not_needed_for_this_test"
+          GITLAB_GROUP: "some-group"
+
+  # ---------------------------------------------------------------------------
+  # Failure scenario: invalid API credentials.
+  # The script must exit with a non-zero code (GitLab returns HTTP 401).
+  # ---------------------------------------------------------------------------
+  e2e-invalid-credentials:
+    name: E2E - Invalid API Credentials
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Run script with invalid API token (expect failure)
+        run: |
+          if bundle exec ruby app/Timesheets.rb 2>/dev/null; then
+            echo "ERROR: Script should have failed with an invalid API token"
+            exit 1
+          fi
+          echo "Script correctly exited with an error for invalid credentials"
+        env:
+          GITLAB_API_ENDPOINT: "https://gitlab.com/api/v4"
+          GITLAB_API_PRIVATE_TOKEN: "glpat_thisisnotavalidtoken12345"
+          GITLAB_GROUP: "gitlab-org"
